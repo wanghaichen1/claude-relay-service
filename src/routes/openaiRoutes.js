@@ -910,8 +910,34 @@ const handleResponses = async (req, res) => {
     req.on('aborted', cleanup)
   } catch (error) {
     logger.error('Proxy to ChatGPT codex/responses failed:', error)
-    // 优先使用主动设置的 statusCode，然后是上游响应的状态码，最后默认 500
-    const status = error.statusCode || error.response?.status || 500
+
+    // 网络层错误（connect 阶段失败）：账号本身没问题，问题在出口/代理。
+    // 解绑粘性会话让下次请求重新调度（不同账号的 proxy 配置可能不同），但不熔断账户。
+    const NETWORK_ERROR_CODES = new Set([
+      'ETIMEDOUT',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ECONNABORTED',
+      'ENOTFOUND',
+      'EAI_AGAIN',
+      'EHOSTUNREACH',
+      'ENETUNREACH'
+    ])
+    const isNetworkError = !error.response && !!error.code && NETWORK_ERROR_CODES.has(error.code)
+
+    if (isNetworkError && sessionHash) {
+      try {
+        await unifiedOpenAIScheduler.unbindSession(sessionHash)
+        logger.warn(
+          `🔓 Unbound OpenAI sticky session ${sessionHash} due to network error (${error.code})`
+        )
+      } catch (unbindError) {
+        logger.error('❌ Failed to unbind OpenAI sticky session in catch handler:', unbindError)
+      }
+    }
+
+    // 优先使用主动设置的 statusCode，然后是上游响应的状态码；网络错误返回 502，其余默认 500
+    const status = error.statusCode || error.response?.status || (isNetworkError ? 502 : 500)
 
     if ((status === 401 || status === 402) && accountId) {
       const statusLabel = status === 401 ? '401错误' : '402错误'

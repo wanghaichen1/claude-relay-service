@@ -743,6 +743,20 @@ class UnifiedOpenAIScheduler {
     }
   }
 
+  // 🔓 仅解除粘性会话与账户的绑定，不影响账户调度状态（用于网络层错误等与账户本身无关的故障）
+  async unbindSession(sessionHash) {
+    if (!sessionHash) {
+      return { success: false }
+    }
+    try {
+      await this._deleteSessionMapping(sessionHash)
+      return { success: true }
+    } catch (error) {
+      logger.error(`❌ Failed to unbind OpenAI sticky session ${sessionHash}:`, error)
+      return { success: false }
+    }
+  }
+
   // ✅ 移除账户的限流状态
   async removeAccountRateLimit(accountId, accountType) {
     try {
